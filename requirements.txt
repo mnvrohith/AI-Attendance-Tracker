@@ -1,17 +1,17 @@
 numpy
 pandas
-scikit-learn
+scikit-learn 
 dlib-bin
 git+https://github.com/ageitgey/face_recognition_models
 setuptools<70.0.0
  
 supabase 
 bcrypt 
-
-segno
-pillow
+ 
+segno 
+pillow 
  
 streamlit
 
-librosa
-resemblyzer
+librosa   
+resemblyzer 

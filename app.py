@@ -10,7 +10,7 @@ from src.components.dialog_auto_enroll import auto_enroll_dialog
 def main():
     st.set_page_config(
         page_title='AI Attendance Tracker - Making Attendance faster using AI',
-        page_icon= "https://i.ibb.co/YTYGn5qV/logo.png"
+        page_icon= "https://i.ibb.co/CsVJ3xzm/logo.png"
     )
     if 'login_type' not in st.session_state:
         st.session_state['login_type'] = None
