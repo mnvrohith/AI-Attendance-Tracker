@@ -22,7 +22,7 @@ def student_dashboard():
         header_dashboard()
     with c2:
         st.subheader(f"""Welcome, {student_data['name']} """)
-        if st.button("Logout", type='secondary', key='loginbackbtn', shortcut="control+backspace"):
+        if st.button("Logout", type='secondary', key='loginbackbtn'):
             st.session_state['is_logged_in'] = False
             del st.session_state.student_data 
             st.rerun()
@@ -81,6 +81,7 @@ def student_dashboard():
                 stats = [
                     ('📅', 'Total', stats['total']),
                     ('✅', 'Attended', stats['attended']),
+                    ('📊', 'Attendance', f"{(stats['attended']/stats['total']*100) if stats['total']>0 else 0:.2f}%")
                 ],
                 footer_callback=unenroll_button
             )
@@ -102,7 +103,7 @@ def student_screen():
     with c1:
         header_dashboard()
     with c2:
-        if st.button("Go back to Home", type='secondary', key='loginbackbtn', shortcut="control+backspace"):
+        if st.button("Go back to Home", type='secondary', key='loginbackbtn'):
             st.session_state['login_type'] = None
             st.rerun()
 
