@@ -47,5 +47,3 @@ AI Attendance Tracker is a smart attendance management system that uses **Face R
 ## Deployment
 
 The application is deployed on **Streamlit Cloud**.
-
----
