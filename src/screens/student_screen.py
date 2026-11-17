@@ -17,6 +17,8 @@ from src.components.subject_card import subject_card
 def student_dashboard():
     student_data = st.session_state.student_data
     student_id = student_data['student_id']
+    if "student_page" not in st.session_state:
+        st.session_state.student_page = "dashboard"
     c1, c2 = st.columns(2, vertical_alignment='center', gap='xxlarge')
     with c1:
         header_dashboard()
@@ -39,7 +41,14 @@ def student_dashboard():
 
 
     st.divider()
-
+    if st.button(
+        "Attendance Simulator",
+        type="secondary",
+        icon=":material/calculate:",
+        width="stretch"
+    ):
+        st.session_state.student_page = "simulator"
+        st.rerun()
 
     with st.spinner('Loading your enrolled subjects..'):
         subjects = get_student_subjects(student_id)
@@ -58,7 +67,12 @@ def student_dashboard():
         if log.get('is_present'):
             stats_map[sid]['attended'] += 1
 
-
+    # Show simulator page when selected
+    if st.session_state.student_page == "simulator":
+        attendance_simulator_page(subjects, stats_map)
+        footer_dashboard()
+        return   
+    
     cols = st.columns(2)
     for i, sub_node in enumerate(subjects):
         sub = sub_node['subjects']
@@ -85,9 +99,21 @@ def student_dashboard():
                 ],
                 footer_callback=unenroll_button
             )
-    footer_dashboard()
 
+    
 
+def attendance_simulator_page(subjects, stats_map):
+    c1, c2 = st.columns([3, 1], vertical_alignment="center")
+
+    with c1:
+        st.title("Attendance Simulator")
+
+    with c2:
+        if st.button("← Back to Dashboard", width="stretch"):
+            st.session_state.student_page = "dashboard"
+            st.rerun()
+
+    attendance_simulator(subjects, stats_map)
 def student_screen():
 
 
@@ -184,6 +210,149 @@ def student_screen():
                 else:
                     st.warning('Please enter your name!')
 
-
+       
         
     footer_dashboard()
+
+
+import math
+
+def attendance_simulator(subjects, stats_map):
+
+    st.divider()
+    st.caption(
+        "Explore how your future attendance may affect "
+        "your overall attendance percentage."
+    )
+
+    if not subjects:
+        st.info("Enroll in a subject to use the attendance simulator.")
+        return
+
+    # Create a mapping of subject IDs to subject details
+    subject_map = {
+        str(node['subjects']['subject_id']): node['subjects']
+        for node in subjects
+    }
+
+    selected_sid = st.selectbox(
+        "Select Subject",
+        options=list(subject_map.keys()),
+        format_func=lambda sid: (
+            f"{subject_map[sid]['name']} "
+            f"({subject_map[sid]['subject_code']})"
+        ),
+        key="simulator_subject"
+    )
+
+    selected_stats = stats_map.get(
+        selected_sid,
+        stats_map.get(subject_map[selected_sid]['subject_id'],
+                      {"total": 0, "attended": 0})
+    )
+
+    total_classes = selected_stats['total']
+    attended_classes = selected_stats['attended']
+
+    current_percentage = (
+        attended_classes / total_classes * 100
+        if total_classes > 0 else 0
+    )
+
+    st.divider()
+
+    st.subheader("Your Current Attendance")
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric("Total Classes", total_classes)
+    c2.metric("Classes Attended", attended_classes)
+    c3.metric("Current Attendance", f"{current_percentage:.2f}%")
+
+    st.progress(min(current_percentage / 100, 1.0))
+    st.subheader("Classes Required to Reach 75%")
+    
+    if current_percentage >= 75:
+        st.success(
+            "You have already achieved the required 75% attendance."
+        )
+    else:
+        if total_classes == 0:
+            required_classes = 1
+        else:    
+            required_classes = math.ceil(
+                (0.75 * total_classes - attended_classes) / 0.25
+            )
+
+        st.info(
+            f"You need to attend the next **{required_classes} "
+            f"consecutive classes** without missing any to reach 75%."
+        )
+
+        if required_classes > upcoming_classes:
+            st.caption(
+                f"You need to attend all {int(upcoming_classes)} "
+                f"simulated upcoming classes and continue attending "
+                f"{required_classes - int(upcoming_classes)} more classes."
+            )
+    st.divider()
+
+    st.subheader("Simulate Future Attendance")
+
+    upcoming_classes = st.number_input(
+        "Number of upcoming classes",
+        min_value=1,
+        max_value=500,
+        value=10,
+        step=1,
+        key="sim_upcoming"
+    )
+
+    planned_attendance = st.slider(
+        "How many upcoming classes will you attend?",
+        min_value=0,
+        max_value=int(upcoming_classes),
+        value=int(upcoming_classes),
+        step=1,
+        key="sim_attended"
+    )
+
+    # Calculate projected attendance
+    future_total = total_classes + int(upcoming_classes)
+    future_attended = attended_classes + planned_attendance
+
+    projected_percentage = (
+        future_attended / future_total * 100
+        if future_total > 0 else 0
+    )
+
+    st.divider()
+
+    st.subheader("Your Projected Attendance")
+
+    c1, c2 = st.columns(2)
+
+    c1.metric(
+        "Projected Attendance",
+        f"{projected_percentage:.2f}%",
+        delta=f"{projected_percentage - current_percentage:+.2f}%"
+    )
+
+    c2.metric(
+        "Projected Classes Attended",
+        f"{future_attended}/{future_total}"
+    )
+
+    st.progress(min(projected_percentage / 100, 1.0))
+
+    if projected_percentage >= 75:
+        st.success("You will maintain the required 75% attendance!")
+    else:
+        st.warning(
+            "Your projected attendance will be below 75%. "
+            "You need to attend more classes."
+        )
+
+    st.divider()
+
+    
