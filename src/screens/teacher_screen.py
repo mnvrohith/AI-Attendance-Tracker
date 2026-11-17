@@ -261,9 +261,6 @@ def teacher_tab_manage_subjects():
 
 
 
-
-   
-
 import pandas as pd
 import streamlit as st
 from datetime import datetime
@@ -271,7 +268,7 @@ from datetime import datetime
 
 def teacher_tab_attendance_records():
 
-    st.header("Attendance Register")
+    st.header("Attendance Records")
 
     teacher_id = st.session_state.teacher_data["teacher_id"]
 
@@ -286,7 +283,9 @@ def teacher_tab_attendance_records():
     selected_subject = st.selectbox(
         "Select Subject",
         subjects,
-        format_func=lambda s: f"{s['name']} ({s['subject_code']}) - {s['section']}",
+        format_func=lambda s: (
+            f"{s['name']} ({s['subject_code']}) - {s['section']}"
+        ),
         key="attendance_register_subject"
     )
 
@@ -313,10 +312,70 @@ def teacher_tab_attendance_records():
 
     students_df = pd.DataFrame(students)
 
+    total_students = len(students_df)
+
     # Attendance sessions
     sessions = sorted(
-        set(r["timestamp"] for r in logs if r.get("timestamp"))
+        set(
+            r["timestamp"]
+            for r in logs
+            if r.get("timestamp")
+        )
     )
+
+    total_sessions = len(sessions)
+
+    # --------------------------------
+    # ATTENDANCE OVERVIEW
+    # --------------------------------
+
+    st.subheader("Attendance Overview")
+
+    if total_sessions > 0:
+
+        # Calculate attendance for each student
+        student_attendance = {}
+
+        for student_id in students_df["Student ID"]:
+
+            attended = sum(
+                1
+                for log in logs
+                if log["student_id"] == student_id
+                and log.get("is_present")
+            )
+
+            student_attendance[student_id] = (
+                attended / total_sessions * 100
+            )
+
+        average_attendance = (
+            sum(student_attendance.values()) / total_students
+            if total_students > 0 else 0
+        )
+
+    else:
+        student_attendance = {
+            student_id: 0
+            for student_id in students_df["Student ID"]
+        }
+        average_attendance = 0
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Total Students", total_students)
+    col2.metric("Classes Conducted", total_sessions)
+    col3.metric(
+        "Average Attendance",
+        f"{average_attendance:.2f}%"
+    )
+
+    # --------------------------------
+    # ATTENDANCE RECORD
+    # --------------------------------
+
+    st.divider()
+    st.subheader("Attendance Record")
 
     # Create attendance register
     register = students_df.set_index(
@@ -333,13 +392,15 @@ def teacher_tab_attendance_records():
 
         register[session] = [
             session_logs.get(student_id, False)
-            for student_id in register.index.get_level_values("Student ID")
+            for student_id in register.index.get_level_values(
+                "Student ID"
+            )
         ]
 
     # Attendance percentage
     if sessions:
         register["Attendance %"] = (
-            register[sessions].sum(axis=1) / len(sessions) * 100
+            register[sessions].sum(axis=1) / total_sessions * 100
         ).round(2)
     else:
         register["Attendance %"] = 0.0
@@ -360,16 +421,191 @@ def teacher_tab_attendance_records():
         for session in sessions
     }
 
-    display_register = display_register.rename(columns=session_labels)
+    display_register = display_register.rename(
+        columns=session_labels
+    )
 
     display_register = display_register.reset_index()
 
-    # Display
     st.dataframe(
         display_register,
         width="stretch",
         hide_index=True
     )
+
+    if not sessions:
+        st.info(
+            "Attendance categories will be available "
+            "after the first attendance session."
+        )
+        return
+
+
+
+    # --------------------------------
+    # EDIT ATTENDANCE
+    # --------------------------------
+
+    st.divider()
+    st.subheader("Edit Attendance")
+
+    if sessions:
+
+        selected_session = st.selectbox(
+            "Select Class Session",
+            sessions,
+            format_func=lambda session: (
+                datetime.fromisoformat(session)
+                .astimezone()
+                .strftime("%d-%b-%Y %I:%M %p")
+            ),
+            key="edit_attendance_session"
+        )
+
+        selected_student_id = st.selectbox(
+            "Select Student",
+            list(students_df["Student ID"]),
+            format_func=lambda sid: students_df.loc[
+                students_df["Student ID"] == sid,
+                "Student Name"
+            ].iloc[0],
+            key="edit_attendance_student"
+        )
+
+        # Get current attendance status
+        current_log = next(
+            (
+                log for log in logs
+                if log["student_id"] == selected_student_id
+                and log["timestamp"] == selected_session
+            ),
+            None
+        )
+
+        current_status = (
+            current_log["is_present"]
+            if current_log else False
+        )
+
+        new_status = st.radio(
+            "Attendance Status",
+            ["Present", "Absent"],
+            index=0 if current_status else 1,
+            horizontal=True,
+            key="edit_attendance_status"
+        )
+
+        if st.button(
+            "Save Attendance Changes",
+            type="primary",
+            key="save_attendance_changes"
+        ):
+
+            updated_status = new_status == "Present"
+
+            try:
+
+                if current_log:
+
+                    # Update existing attendance record
+                    response = (
+                        supabase.table("attendance_logs")
+                        .update({
+                            "is_present": updated_status
+                        })
+                        .eq("student_id", selected_student_id)
+                        .eq("subject_id", subject_id)
+                        .eq("timestamp", selected_session)
+                        .select()
+                        .execute()
+                    )
+
+                else:
+
+                    # Insert record if it does not exist
+                    response = (
+                        supabase.table("attendance_logs")
+                        .insert({
+                            "student_id": selected_student_id,
+                            "subject_id": subject_id,
+                            "timestamp": selected_session,
+                            "is_present": updated_status
+                        })
+                        .execute()
+                    )
+
+                st.toast("Attendance updated successfully!")
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Unable to update attendance: {e}")
+
+    # --------------------------------
+    # ATTENDANCE CATEGORIES
+    # --------------------------------
+
+    st.divider()
+    st.subheader("Attendance Categories")
+
+    category = st.selectbox(
+        "Select Attendance Category",
+        [
+            "75% and Above",
+            "50% - 74%",
+            "25% - 49%",
+            "Below 25%"
+        ],
+        key="records_attendance_category"
+    )
+
+    categorized_students = []
+
+    for student_id, percentage in student_attendance.items():
+
+        student_name = students_df.loc[
+            students_df["Student ID"] == student_id,
+            "Student Name"
+        ].iloc[0]
+
+        if category == "75% and Above" and percentage >= 75:
+            categorized_students.append({
+                "Student Name": student_name,
+                "Attendance Percentage": round(percentage, 2)
+            })
+
+        elif category == "50% - 74%" and 50 <= percentage < 75:
+            categorized_students.append({
+                "Student Name": student_name,
+                "Attendance Percentage": round(percentage, 2)
+            })
+
+        elif category == "25% - 49%" and 25 <= percentage < 50:
+            categorized_students.append({
+                "Student Name": student_name,
+                "Attendance Percentage": round(percentage, 2)
+            })
+
+        elif category == "Below 25%" and percentage < 25:
+            categorized_students.append({
+                "Student Name": student_name,
+                "Attendance Percentage": round(percentage, 2)
+            })
+
+    if categorized_students:
+
+        category_df = pd.DataFrame(categorized_students)
+
+        st.dataframe(
+            category_df,
+            width="stretch",
+            hide_index=True
+        )
+
+    else:
+        st.success("No students found in this category.")
+
+
+   
 
 def login_teacher(username, password):
     if not username or not password:
@@ -490,9 +726,239 @@ def teacher_screen_register():
 
 
     
+# def teacher_tab_attendance_analysis():
+
+#     st.header("Attendance Analysis")
+
+#     teacher_id = st.session_state.teacher_data["teacher_id"]
+
+#     subjects = get_teacher_subjects(teacher_id)
+
+#     if not subjects:
+#         st.info("No subjects available.")
+#         return
+
+#     selected_subject = st.selectbox(
+#         "Select Subject",
+#         subjects,
+#         format_func=lambda s: (
+#             f"{s['name']} ({s['subject_code']}) - {s['section']}"
+#         ),
+#         key="analysis_subject"
+#     )
+
+#     subject_id = selected_subject["subject_id"]
+
+ 
+#     enrolled_students = get_subject_students(subject_id)
+#     attendance_logs = get_subject_attendance(subject_id)
+
+#     if not enrolled_students:
+#         st.info("No students enrolled in this subject.")
+#         return
+
+#     # Student information
+#     students = {}
+
+#     for row in enrolled_students:
+#         student = row.get("students")
+
+#         if student:
+#             student_id = row["student_id"]
+
+#             students[student_id] = {
+#                 "name": student["name"],
+#                 "present": 0,
+#                 "percentage": 0
+#             }
+
+#     total_students = len(students)
+
+#     if total_students == 0:
+#         st.info("No student information available.")
+#         return
+
+ 
+#     sessions = sorted(
+#         set(log["timestamp"] for log in attendance_logs)
+#     )
+
+#     if not sessions:
+#         st.info("No attendance sessions recorded yet.")
+#         return
+
+   
+#     attendance_matrix = {}
+
+#     for student_id in students:
+#         attendance_matrix[student_id] = {}
+
+#         for session in sessions:
+#             attendance_matrix[student_id][session] = 0
+
+#     for log in attendance_logs:
+#         student_id = log["student_id"]
+#         session = log["timestamp"]
+
+#         if student_id in attendance_matrix:
+#             attendance_matrix[student_id][session] = (
+#                 1 if log["is_present"] else 0
+#             )
+
+ 
+#     total_sessions = len(sessions)
+
+#     for student_id in students:
+#         present_count = sum(
+#             attendance_matrix[student_id].values()
+#         )
+
+#         percentage = (
+#             present_count / total_sessions * 100
+#         )
+
+#         students[student_id]["present"] = present_count
+#         students[student_id]["percentage"] = percentage
+
+
+#     st.subheader("Attendance Trend")
+
+#     chart_mode = st.radio(
+#         "View Attendance Trend",
+#         ["Overall Class", "Individual Student"],
+#         horizontal=True,
+#         key="analysis_chart_mode"
+#     )
+
+#     # Overall class attendance per session
+#     if chart_mode == "Overall Class":
+
+#         class_percentages = []
+
+#         for session in sessions:
+
+#             present_count = sum(
+#                 attendance_matrix[student_id][session]
+#                 for student_id in students
+#             )
+
+#             percentage = (
+#                 present_count / total_students * 100
+#             )
+
+#             class_percentages.append(percentage)
+
+#         chart_data = pd.DataFrame({
+#             "Session": range(1, total_sessions + 1),
+#             "Attendance Percentage": class_percentages
+#         })
+
+#         st.line_chart(
+#             chart_data.set_index("Session")
+#         )
+
+#     # Individual student attendance trend
+#     else:
+
+#         student_options = list(students.keys())
+
+#         selected_student = st.selectbox(
+#             "Select Student",
+#             student_options,
+#             format_func=lambda sid: students[sid]["name"],
+#             key="analysis_student"
+#         )
+
+#         cumulative_percentages = []
+#         present_count = 0
+
+#         for session in sessions:
+
+#             present_count += attendance_matrix[selected_student][session]
+
+#             percentage = (
+#                 present_count /
+#                 (sessions.index(session) + 1) * 100
+#             )
+
+#             cumulative_percentages.append(percentage)
+
+#         chart_data = pd.DataFrame({
+#             "Session": range(1, total_sessions + 1),
+#             "Attendance Percentage": cumulative_percentages
+#         })
+
+#         st.line_chart(
+#             chart_data.set_index("Session")
+#         )
+
+  
+#     st.divider()
+
+#     st.subheader("Attendance Categories")
+
+#     category = st.selectbox(
+#         "Select Attendance Category",
+#         [
+#             "75% and Above",
+#             "50% - 74%",
+#             "25% - 49%",
+#             "Below 25%"
+#         ],
+#         key="analysis_category"
+#     )
+
+#     # Categorize students
+#     categorized_students = []
+
+#     for student_id, student in students.items():
+
+#         percentage = student["percentage"]
+
+#         if category == "75% and Above" and percentage >= 75:
+#             categorized_students.append(student)
+
+#         elif category == "50% - 74%" and 50 <= percentage < 75:
+#             categorized_students.append(student)
+
+#         elif category == "25% - 49%" and 25 <= percentage < 50:
+#             categorized_students.append(student)
+
+#         elif category == "Below 25%" and percentage < 25:
+#             categorized_students.append(student)
+
+#     # Display student list
+#     if categorized_students:
+
+#         student_data = pd.DataFrame([
+#             {
+#                 "Student Name": student["name"],
+#                 "Classes Attended": student["present"],
+#                 "Attendance Percentage": round(
+#                     student["percentage"], 2
+#                 )
+#             }
+#             for student in categorized_students
+#         ])
+
+#         st.dataframe(
+#             student_data,
+#             use_container_width=True,
+#             hide_index=True
+#         )
+
+#     else:
+#         st.success("No students found in this category.")
+
+import math
 def teacher_tab_attendance_analysis():
 
-    st.header("Attendance Analysis")
+    st.header("Attendance Analysis & Risk Assessment")
+
+    st.caption(
+        "Identify students who may be at risk of falling below "
+        "the required 75% attendance threshold."
+    )
 
     teacher_id = st.session_state.teacher_data["teacher_id"]
 
@@ -513,7 +979,6 @@ def teacher_tab_attendance_analysis():
 
     subject_id = selected_subject["subject_id"]
 
- 
     enrolled_students = get_subject_students(subject_id)
     attendance_logs = get_subject_attendance(subject_id)
 
@@ -542,40 +1007,50 @@ def teacher_tab_attendance_analysis():
         st.info("No student information available.")
         return
 
- 
+    # Get unique attendance sessions
     sessions = sorted(
-        set(log["timestamp"] for log in attendance_logs)
+        set(
+            log["timestamp"]
+            for log in attendance_logs
+            if log.get("timestamp")
+        )
     )
 
     if not sessions:
         st.info("No attendance sessions recorded yet.")
         return
 
-   
+    # Build attendance matrix
     attendance_matrix = {}
 
     for student_id in students:
-        attendance_matrix[student_id] = {}
-
-        for session in sessions:
-            attendance_matrix[student_id][session] = 0
+        attendance_matrix[student_id] = {
+            session: 0 for session in sessions
+        }
 
     for log in attendance_logs:
         student_id = log["student_id"]
         session = log["timestamp"]
 
-        if student_id in attendance_matrix:
+        if (
+            student_id in attendance_matrix
+            and session in attendance_matrix[student_id]
+        ):
             attendance_matrix[student_id][session] = (
                 1 if log["is_present"] else 0
             )
 
- 
+    # Calculate attendance percentages
     total_sessions = len(sessions)
 
     for student_id in students:
-        present_count = sum(
-            attendance_matrix[student_id].values()
-        )
+
+        attendance = [
+            attendance_matrix[student_id][session]
+            for session in sessions
+        ]
+
+        present_count = sum(attendance)
 
         percentage = (
             present_count / total_sessions * 100
@@ -584,132 +1059,205 @@ def teacher_tab_attendance_analysis():
         students[student_id]["present"] = present_count
         students[student_id]["percentage"] = percentage
 
+    # --------------------------------
+    # ATTENDANCE RISK ASSESSMENT
+    # --------------------------------
 
-    st.subheader("Attendance Trend")
-
-    chart_mode = st.radio(
-        "View Attendance Trend",
-        ["Overall Class", "Individual Student"],
-        horizontal=True,
-        key="analysis_chart_mode"
-    )
-
-    # Overall class attendance per session
-    if chart_mode == "Overall Class":
-
-        class_percentages = []
-
-        for session in sessions:
-
-            present_count = sum(
-                attendance_matrix[student_id][session]
-                for student_id in students
-            )
-
-            percentage = (
-                present_count / total_students * 100
-            )
-
-            class_percentages.append(percentage)
-
-        chart_data = pd.DataFrame({
-            "Session": range(1, total_sessions + 1),
-            "Attendance Percentage": class_percentages
-        })
-
-        st.line_chart(
-            chart_data.set_index("Session")
-        )
-
-    # Individual student attendance trend
-    else:
-
-        student_options = list(students.keys())
-
-        selected_student = st.selectbox(
-            "Select Student",
-            student_options,
-            format_func=lambda sid: students[sid]["name"],
-            key="analysis_student"
-        )
-
-        cumulative_percentages = []
-        present_count = 0
-
-        for session in sessions:
-
-            present_count += attendance_matrix[selected_student][session]
-
-            percentage = (
-                present_count /
-                (sessions.index(session) + 1) * 100
-            )
-
-            cumulative_percentages.append(percentage)
-
-        chart_data = pd.DataFrame({
-            "Session": range(1, total_sessions + 1),
-            "Attendance Percentage": cumulative_percentages
-        })
-
-        st.line_chart(
-            chart_data.set_index("Session")
-        )
-
-  
-    st.divider()
-
-    st.subheader("Attendance Categories")
-
-    category = st.selectbox(
-        "Select Attendance Category",
-        [
-            "75% and Above",
-            "50% - 74%",
-            "25% - 49%",
-            "Below 25%"
-        ],
-        key="analysis_category"
-    )
-
-    # Categorize students
-    categorized_students = []
+    risk_results = []
 
     for student_id, student in students.items():
 
-        percentage = student["percentage"]
+        attendance = [
+            attendance_matrix[student_id][session]
+            for session in sessions
+        ]
 
-        if category == "75% and Above" and percentage >= 75:
-            categorized_students.append(student)
+        current_percentage = student["percentage"]
 
-        elif category == "50% - 74%" and 50 <= percentage < 75:
-            categorized_students.append(student)
+        # Recent attendance trend
+        if total_sessions >= 10:
 
-        elif category == "25% - 49%" and 25 <= percentage < 50:
-            categorized_students.append(student)
+            recent = attendance[-5:]
+            previous = attendance[-10:-5]
 
-        elif category == "Below 25%" and percentage < 25:
-            categorized_students.append(student)
+            recent_percentage = sum(recent) / 5 * 100
+            previous_percentage = sum(previous) / 5 * 100
 
-    # Display student list
-    if categorized_students:
+            trend_difference = (
+                recent_percentage - previous_percentage
+            )
 
-        student_data = pd.DataFrame([
-            {
-                "Student Name": student["name"],
-                "Classes Attended": student["present"],
-                "Attendance Percentage": round(
-                    student["percentage"], 2
+            if trend_difference <= -20:
+                trend = "Declining"
+            elif trend_difference >= 20:
+                trend = "Improving"
+            else:
+                trend = "Stable"
+
+        else:
+            trend = "Insufficient Data"
+
+        # Consecutive absences
+        consecutive_absences = 0
+
+        for status in reversed(attendance):
+            if status == 0:
+                consecutive_absences += 1
+            else:
+                break
+
+        # Risk score
+        risk_score = 0
+
+        if current_percentage < 65:
+            risk_score += 40
+        elif current_percentage < 75:
+            risk_score += 25
+
+        if trend == "Declining":
+            risk_score += 25
+        elif trend == "Stable":
+            risk_score += 10
+
+        if consecutive_absences >= 3:
+            risk_score += 35
+        elif consecutive_absences >= 1:
+            risk_score += 15
+
+        # Risk classification
+        if risk_score >= 60:
+            risk_level = "High"
+        elif risk_score >= 30:
+            risk_level = "Moderate"
+        else:
+            risk_level = "Low"
+
+        # Classes required to reach 75%
+        if current_percentage >= 75:
+            required_classes = 0
+        else:
+            required_classes = max(
+                0,
+                math.ceil(
+                    (0.75 * total_sessions - student["present"]) / 0.25
                 )
-            }
-            for student in categorized_students
-        ])
+            )
 
-        st.dataframe(
-            student_data,
-            use_container_width=True,
-            hide_index=True
+        risk_results.append({
+            "Student ID": student_id,
+            "Student Name": student["name"],
+            "Attendance (%)": round(current_percentage, 2),
+            "Recent Trend": trend,
+            "Consecutive Absences": consecutive_absences,
+            "Classes to Attend": required_classes,
+            "Risk Score": risk_score,
+            "Risk Level": risk_level
+        })
+
+    # --------------------------------
+    # RISK OVERVIEW
+    # --------------------------------
+
+    st.divider()
+    st.subheader("Risk Overview")
+
+    high_risk = sum(
+        1 for s in risk_results if s["Risk Level"] == "High"
+    )
+
+    moderate_risk = sum(
+        1 for s in risk_results if s["Risk Level"] == "Moderate"
+    )
+
+    low_risk = sum(
+        1 for s in risk_results if s["Risk Level"] == "Low"
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("High Risk", high_risk)
+    col2.metric("Moderate Risk", moderate_risk)
+    col3.metric("Low Risk", low_risk)
+
+    # --------------------------------
+    # STUDENT-WISE RISK ANALYSIS
+    # --------------------------------
+
+    st.divider()
+    st.subheader("Student-wise Risk Analysis")
+
+    risk_df = pd.DataFrame(risk_results)
+
+    risk_df = risk_df.sort_values(
+        by="Risk Score",
+        ascending=False
+    )
+
+    st.dataframe(
+        risk_df.drop(columns=["Student ID"]),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --------------------------------
+    # INDIVIDUAL STUDENT RISK DETAILS
+    # --------------------------------
+
+    st.divider()
+    st.subheader("Individual Student Risk Details")
+
+    selected_student_id = st.selectbox(
+        "Select Student",
+        list(students.keys()),
+        format_func=lambda sid: students[sid]["name"],
+        key="risk_student"
+    )
+
+    selected_result = next(
+        s for s in risk_results
+        if s["Student ID"] == selected_student_id
+    )
+
+    st.metric(
+        "Current Attendance",
+        f"{selected_result['Attendance (%)']:.2f}%"
+    )
+
+    st.write(
+        f"**Risk Level:** {selected_result['Risk Level']}"
+    )
+
+    st.write(
+        f"**Recent Trend:** {selected_result['Recent Trend']}"
+    )
+
+    st.write(
+        f"**Consecutive Absences:** "
+        f"{selected_result['Consecutive Absences']}"
+    )
+
+    st.write(
+        f"**Classes to attend to reach 75%:** "
+        f"{selected_result['Classes to Attend']}"
+    )
+
+    if selected_result["Risk Level"] == "High":
+
+        st.error(
+            "Teacher Recommendation: Prioritize this student "
+            "for attendance follow-up."
+        )
+
+    elif selected_result["Risk Level"] == "Moderate":
+
+        st.warning(
+            "Teacher Recommendation: Monitor this student's "
+            "attendance in upcoming classes."
         )
 
     else:
-        st.success("No students found in this category.")
+
+        st.success(
+            "Teacher Recommendation: Attendance is currently "
+            "under control. Continue monitoring."
+        )
